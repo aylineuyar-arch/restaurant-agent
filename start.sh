@@ -94,7 +94,7 @@ echo "✅ API port: $API_PORT"
 echo "✅ UI port:  $UI_PORT"
 
 # ── Start FastAPI ─────────────────────────────────────────────────────────────
-$PYTHON -m uvicorn api:app --host 127.0.0.1 --port $API_PORT > uvicorn.log 2>&1 &
+$PYTHON -m uvicorn api:app --host 0.0.0.0 --port $API_PORT > uvicorn.log 2>&1 &
 API_PID=$!
 echo $API_PID > .api_pid
 
@@ -116,13 +116,13 @@ cd ..
 echo $REACT_PID > .react_pid
 
 for i in {1..10}; do
-  if curl -s "http://127.0.0.1:$UI_PORT" > /dev/null 2>&1; then
+  if curl -s "http://localhost:$UI_PORT" > /dev/null 2>&1; then
     echo "✅ Vite is up (PID $REACT_PID)"; break
   fi
   sleep 1
 done
 
-UI_URL="http://127.0.0.1:${UI_PORT}/"
+UI_URL="http://localhost:${UI_PORT}/"
 
 # ── Isolated Chrome for Playwright (CDP port 9222) ────────────────────────────
 # Never touches ~/Library/Application Support/Google/Chrome/ (personal profile).
@@ -135,15 +135,10 @@ chrome_isolated_running() {
   pgrep -f "user-data-dir=${CHROME_USER_DATA_DIR}" >/dev/null 2>&1
 }
 
-open_ui_in_isolated_chrome() {
-  if chrome_isolated_running; then
-    if curl -sf -X PUT "http://127.0.0.1:${CHROME_DEVTOOLS_PORT}/json/new?${UI_URL}" >/dev/null 2>&1; then
-      echo "✅ Opened $UI_URL in isolated Chrome (new tab)"
-    else
-      echo "✅ Isolated Chrome already running — open: $UI_URL"
-    fi
-  elif [ -x "$CHROME_BIN" ]; then
-    echo "🌐 Starting isolated Chrome → $UI_URL"
+# ── Start isolated Chrome in background (for Playwright CDP only) ─────────────
+if ! chrome_isolated_running; then
+  if [ -x "$CHROME_BIN" ]; then
+    echo "🤖 Starting booking Chrome (background, port $CHROME_DEVTOOLS_PORT)..."
     "$CHROME_BIN" \
       --remote-debugging-port="$CHROME_DEVTOOLS_PORT" \
       --remote-allow-origins="*" \
@@ -151,15 +146,21 @@ open_ui_in_isolated_chrome() {
       --profile-directory=Default \
       --no-first-run \
       --no-default-browser-check \
-      "$UI_URL" >/dev/null 2>&1 &
+      --window-position=10000,10000 \
+      --window-size=1280,800 \
+      "about:blank" >/dev/null 2>&1 &
     sleep 2
+    echo "✅ Booking Chrome ready on CDP port $CHROME_DEVTOOLS_PORT"
   else
-    echo "⚠️  Google Chrome not found at $CHROME_BIN"
+    echo "⚠️  Google Chrome not found — booking automation unavailable"
   fi
-}
+else
+  echo "✅ Booking Chrome already running"
+fi
 
-echo "ℹ️  Isolated Chrome profile: $CHROME_USER_DATA_DIR (not your personal Chrome)"
-open_ui_in_isolated_chrome
+# ── Open UI in Safari ─────────────────────────────────────────────────────────
+echo "🌐 Opening UI in Safari..."
+open -a Safari "$UI_URL"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

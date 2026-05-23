@@ -163,13 +163,14 @@ def rank(state: AgentState) -> dict:
     try:
         response = claude.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=600,
+            max_tokens=2000,
             messages=[{
                 "role": "user",
                 "content": f"""Rank for: "{state['query']}"
 {past_line}Candidates: {candidates}
-Return 3, different price points. JSON:
-{{"recommendations":[{{"rank":1,"name":"","url":"","reason":"","rating_info":"","price_range":"$X-$Y/person","neighborhood":""}}],"summary":""}}"""
+Return exactly 6 restaurants: 2 casual, 2 mid-range, 2 high-end. JSON:
+{{"recommendations":[{{"rank":1,"name":"","url":"","reason":"1-2 sentences","rating_info":"","price_range":"$X-$Y/person","neighborhood":"","tags":["casual","cuisine type","occasion"]}}],"summary":"one punchy vibe line, max 12 words, no restaurant names"}}
+CRITICAL: First tag of each item MUST be exactly one of: "casual", "mid-range", "high-end". Return all 6."""
             }]
         )
         parsed = _extract_json(response.content[0].text)

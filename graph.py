@@ -63,8 +63,8 @@ def build_graph():
 graph = build_graph()
 
 
-def run_graph(query: str) -> dict:
-    initial_state: AgentState = {
+def _initial_state(query: str) -> AgentState:
+    return {
         "query":            query,
         "city":             "",
         "cuisine":          "",
@@ -83,4 +83,14 @@ def run_graph(query: str) -> dict:
         "final_answer":     "",
         "log":              [],
     }
-    return graph.invoke(initial_state)
+
+
+def run_graph(query: str) -> dict:
+    return graph.invoke(_initial_state(query))
+
+
+def stream_graph(query: str):
+    """Yields (node_name, partial_state) as each agent completes."""
+    for event in graph.stream(_initial_state(query)):
+        for node_name, output in event.items():
+            yield node_name, output

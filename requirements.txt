@@ -8,3 +8,5 @@ fastapi
 uvicorn
 chromadb
 pydantic
+resend
+resend

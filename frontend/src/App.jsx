@@ -11,39 +11,67 @@ export default function App() {
   const [log, setLog]           = useState([])
   const [summary, setSummary]   = useState('')
   const [error, setError]       = useState('')
-  const [query, setQuery]       = useState('')
   const [meta, setMeta]         = useState({})
+  const [filter, setFilter]     = useState(null)   // null = all
+  const [lastQuery, setLastQuery] = useState('')
 
-  async function handleSearch(q) {
+  const FILTERS = [
+    { key: null,         label: 'show me everything' },
+    { key: 'casual',     label: 'no dress code' },
+    { key: 'mid-range',  label: 'treat yourself' },
+    { key: 'high-end',   label: 'full send' },
+  ]
+
+  function handleSearch(q) {
     setLoading(true)
     setError('')
     setResults(null)
     setLog([])
     setSummary('')
-    setQuery(q)
     setMeta({})
 
-    try {
-      const res = await fetch(`${API_URL}/find-restaurant`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ query: q }),
-      })
+    setLastQuery(q)
+    const url = `${API_URL}/find-restaurant-stream?q=${encodeURIComponent(q)}`
+    const es  = new EventSource(url)
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err.detail || `Server error ${res.status}`)
+    es.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data)
+
+        if (data.error) {
+          setError(data.error)
+          setLoading(false)
+          es.close()
+          return
+        }
+
+        // Live log update as each agent completes
+        if (data.log?.length) {
+          setLog(prev => [...prev, ...data.log])
+        }
+
+        // Final event
+        if (data.done) {
+          setResults(data.recommendations || [])
+          setSummary(data.final_answer || '')
+          setMeta({
+            city:       data.city,
+            cuisine:    data.cuisine,
+            date:       data.date,
+            party_size: data.party_size,
+          })
+          setLoading(false)
+          es.close()
+        }
+      } catch {
+        // malformed event — ignore
       }
+    }
 
-      const data = await res.json()
-      setLog(data.log || [])
-      setResults(data.recommendations || [])
-      setSummary(data.final_answer || '')
-      setMeta({ city: data.city, cuisine: data.cuisine, date: data.date, party_size: data.party_size })
-    } catch (e) {
-      setError(e.message)
-    } finally {
+    es.onerror = () => {
+      setError('Connection lost — please try again')
       setLoading(false)
+      es.close()
     }
   }
 
@@ -52,118 +80,120 @@ export default function App() {
     setLog([])
     setSummary('')
     setError('')
-    setQuery('')
     setMeta({})
+    setFilter(null)
   }
 
-  const [top, ...others] = results || []
+  const filtered = results
+    ? (filter ? results.filter(r => (r.tags || [])[0] === filter) : results)
+    : []
+  const [top, ...others] = filtered
 
   return (
-    <div className="min-h-screen bg-[#0F1117]">
-      {/* Sidebar */}
-      <aside className="fixed top-0 left-0 h-full w-72 bg-[#1A1D27] border-r border-white/08
-                        flex flex-col p-6 z-10">
-        <div className="mb-8">
-          <h1 className="font-display text-xl font-bold text-white">🍽️ Restaurant Finder</h1>
-          <p className="text-[#555E72] text-xs mt-1">LangGraph · Claude · ChromaDB</p>
-        </div>
-
-        <SearchForm onSearch={handleSearch} loading={loading} />
-
+    <div className="min-h-screen bg-bg text-ink">
+      {/* Top bar */}
+      <header className="border-b border-subtle px-4 py-4 flex items-center justify-between">
+        <span className="font-display text-4xl font-bold tracking-wide text-accent">fork yeah!</span>
         {results && (
-          <div className="mt-auto pt-6 border-t border-white/08">
-            <p className="text-xs uppercase tracking-widest text-[#555E72] mb-3">Current search</p>
-            {meta.city    && <p className="text-sm text-[#8A94A6] mb-1">📍 {meta.city}</p>}
-            {meta.cuisine && <p className="text-sm text-[#8A94A6] mb-1">🍜 {meta.cuisine}</p>}
-            {meta.date    && <p className="text-sm text-[#8A94A6] mb-3">📅 {meta.date}</p>}
-            <button
-              onClick={handleReset}
-              className="w-full text-sm font-medium text-[#8A94A6] hover:text-white
-                         border border-white/10 hover:border-white/20
-                         rounded-lg py-2 transition-all duration-150"
-            >
-              🔄 New Search
-            </button>
+          <button
+            onClick={handleReset}
+            className="text-sm text-muted hover:text-ink border border-subtle hover:border-ink/20
+                       rounded-full px-5 py-2 transition-all"
+          >
+            still hungry?
+          </button>
+        )}
+      </header>
+
+      <main className="max-w-3xl mx-auto py-8">
+
+        {/* Search — show when no results yet */}
+        {!results && !loading && (
+          <div className="px-4">
+            <SearchForm onSearch={handleSearch} loading={loading} />
           </div>
         )}
-      </aside>
 
-      {/* Main */}
-      <main className="ml-72 min-h-screen p-10">
-        <div className="max-w-3xl mx-auto">
-
-          {/* Error */}
-          {error && (
-            <div className="mb-6 bg-red-900/20 border border-red-500/30 rounded-xl px-5 py-4
-                            text-red-400 text-sm animate-fade-in">
-              ⚠️ {error}
-              <p className="mt-1 text-red-500/70 text-xs">
-                Make sure FastAPI is running: <code>./start.sh</code>
-              </p>
-            </div>
-          )}
-
-          {/* Agent steps */}
-          {(log.length > 0 || loading) && (
+        {/* Live agent steps — visible while loading */}
+        {(loading || (log.length > 0 && !results)) && (
+          <div className="px-4">
             <AgentSteps log={log} loading={loading} />
-          )}
+          </div>
+        )}
 
-          {/* Results */}
-          {results && results.length > 0 ? (
-            <div className="animate-fade-in">
-              <h2 className="font-display text-3xl font-bold mb-2">Your recommendations</h2>
-              {summary && (
-                <p className="text-[#8A94A6] text-sm leading-relaxed mb-8">{summary}</p>
-              )}
+        {/* Error */}
+        {error && (
+          <div className="mx-4 mt-6 border border-red-900/40 bg-red-950/20 rounded-xl px-5 py-4 text-red-400 text-sm">
+            {error}
+          </div>
+        )}
 
-              {/* Top pick */}
-              {top && (
-                <div className="mb-6">
-                  <RestaurantCard restaurant={top} featured date={meta.date} partySize={meta.party_size} city={meta.city} />
-                </div>
-              )}
-
-              {/* Others */}
-              {others.length > 0 && (
-                <>
-                  <div className="flex items-center gap-4 mb-5">
-                    <div className="flex-1 h-px bg-white/08" />
-                    <span className="text-xs uppercase tracking-widest text-[#555E72]">Other options</span>
-                    <div className="flex-1 h-px bg-white/08" />
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {others.map((r, i) => (
-                      <RestaurantCard key={i} restaurant={r} date={meta.date} partySize={meta.party_size} city={meta.city} />
-                    ))}
-                  </div>
-                </>
-              )}
+        {/* Results */}
+        {results && results.length === 0 && !loading && (
+          <div className="mt-8 text-muted text-sm text-center">
+            no results found — try a different query
+          </div>
+        )}
+        {results && results.length > 0 && filtered.length === 0 && (
+          <div className="mt-2 text-muted text-sm text-center">
+            nothing in that vibe — try a different one
+          </div>
+        )}
+        {results && results.length > 0 && (
+          <div className="animate-fade-in">
+            <div className="mb-6 px-4">
+              <SearchForm onSearch={handleSearch} loading={loading} compact />
             </div>
-          ) : !loading && !error && (
-            /* Landing */
-            <div className="animate-fade-in">
-              <h2 className="font-display text-3xl font-bold mb-2">Find your next table</h2>
-              <p className="text-[#8A94A6] mb-8">
-                Describe what you're looking for in plain English. The agent will research,
-                enrich, and rank the best options for you.
+
+            {summary && (
+              <p className="text-center text-xs text-white/35 italic tracking-wide mb-4 leading-relaxed px-4">
+                {summary}
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {[
-                  { icon: '🔍', title: 'Research', desc: 'Searches OpenTable for matching restaurants' },
-                  { icon: '📍', title: 'Enrich', desc: 'Pulls ratings, hours, and neighbourhood from Maps' },
-                  { icon: '⭐', title: 'Recommend', desc: 'Ranks top 3 across price points with reasons' },
-                ].map(({ icon, title, desc }) => (
-                  <div key={title}
-                       className="bg-[#1A1D27] border border-white/08 rounded-xl p-5">
-                    <div className="text-2xl mb-3">{icon}</div>
-                    <h3 className="font-semibold text-white mb-1">{title}</h3>
-                    <p className="text-[#8A94A6] text-sm">{desc}</p>
-                  </div>
-                ))}
-              </div>
+            )}
+
+            {/* Vibe filters + regenerate */}
+            <div className="flex gap-2 mb-5 flex-wrap items-center px-4">
+              {FILTERS.map(f => (
+                <button
+                  key={String(f.key)}
+                  onClick={() => setFilter(f.key)}
+                  className={`text-xs px-4 py-1.5 rounded-full border transition-all
+                    ${filter === f.key
+                      ? 'bg-accent text-bg border-accent font-semibold'
+                      : 'border-subtle text-muted hover:text-ink hover:border-ink/20'
+                    }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+              <button
+                onClick={() => handleSearch(lastQuery)}
+                disabled={loading}
+                className="ml-auto text-xs text-muted hover:text-ink border border-subtle hover:border-ink/20
+                           rounded-full px-4 py-1.5 transition-all disabled:opacity-30"
+              >
+                ↺ new batch
+              </button>
             </div>
-          )}
-        </div>
+
+            {top && (
+              <div className="mb-3">
+                <RestaurantCard restaurant={top} featured date={meta.date} partySize={meta.party_size} city={meta.city} />
+              </div>
+            )}
+
+            {others.length > 0 && (
+              <>
+                <p className="text-xs uppercase tracking-widest text-white/20 mb-2 px-4">other options</p>
+                <div className="flex flex-col gap-1.5">
+                  {others.map((r, i) => (
+                    <RestaurantCard key={i} restaurant={r} date={meta.date} partySize={meta.party_size} city={meta.city} />
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </main>
     </div>
   )

@@ -1,10 +1,8 @@
 import asyncio
-import re
+from typing import Optional
 from urllib.parse import quote_plus
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
-# Isolated Chrome from ./start.sh: CDP on 127.0.0.1:9222, user-data-dir .chrome-dev-profile.
-# Does not use personal Chrome under ~/Library/Application Support/Google/Chrome/.
 CHROME_CDP_URL = "http://127.0.0.1:9222"
 
 
@@ -30,76 +28,78 @@ def build_search_url(restaurant_name: str, city: str, date: str, time_pref: str,
     )
 
 
-async def book_opentable(restaurant_name: str, city: str, date: str, time_pref: str, party_size: int) -> dict:
-    search_url = build_search_url(restaurant_name, city, date, time_pref, party_size)
-
+async def _try_cdp_booking(search_url: str, restaurant_name: str) -> Optional[dict]:
+    """Attempt slot-click via pre-launched CDP Chrome. Returns None if CDP unavailable."""
     async with async_playwright() as p:
         try:
             browser = await p.chromium.connect_over_cdp(CHROME_CDP_URL)
-            print("✅ Connected to isolated Chrome")
-        except Exception as e:
-            return {
-                "status": "error",
-                "error":  "Could not connect to isolated Chrome on port 9222. Run ./start.sh first.",
-                "search_url": search_url
-            }
-
-        # Get or create a context, always open a fresh page
-        try:
-            context = browser.contexts[0]
         except Exception:
-            context = await browser.new_context()
-        page = await context.new_page()
+            return None  # CDP not available — caller will fall back to URL email
+
+        print("✅ Connected to isolated Chrome via CDP")
+        context = browser.contexts[0] if browser.contexts else await browser.new_context()
+        page    = await context.new_page()
 
         try:
-            print(f"🔍 Navigating to OpenTable search for {restaurant_name}...")
+            print(f"🔍 Navigating to OpenTable for: {restaurant_name}")
             await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
             await page.wait_for_timeout(4000)
 
-            # ── Click the first available time slot ───────────────────────────
-            # Selectors from OpenTable's live HTML (verified 2026-05)
             slot_selectors = [
                 'a[role="button"][aria-label*="Reserve table"]',
                 '[data-testid^="time-slot-"] a',
                 '[data-test^="time-slot-"] a',
                 '[data-test="time-slots"] a',
             ]
-            clicked_slot = False
             for sel in slot_selectors:
                 try:
                     await page.wait_for_selector(sel, timeout=6000)
                     slots = await page.query_selector_all(sel)
-                    if slots:
-                        slot_label = await slots[0].get_attribute("aria-label") or ""
-                        await slots[0].click()
-                        await page.wait_for_load_state("domcontentloaded")
-                        await page.wait_for_timeout(2000)
-                        clicked_slot = True
-                        print(f"✅ Clicked slot: {slot_label}")
-                        break
-                except PWTimeout:
+                    if not slots:
+                        continue
+                    slot_label = await slots[0].get_attribute("aria-label") or sel
+                    await slots[0].click()
+                    await page.wait_for_timeout(3000)
+                    try:
+                        await page.wait_for_load_state("domcontentloaded", timeout=5000)
+                    except Exception:
+                        pass
+                    final_url = page.url
+                    print(f"✅ Clicked slot: {slot_label} → {final_url}")
+                    return {"status": "pending_confirmation", "final_url": final_url,
+                            "search_url": search_url, "slot_found": True}
+                except Exception:
                     continue
 
-            if not clicked_slot:
-                return {
-                    "status":     "needs_selection",
-                    "message":    "OpenTable loaded but no available time slots were found for that date/time. Try a different date or restaurant.",
-                    "search_url": search_url,
-                }
-
-            # ── Stop here — return the pre-filled checkout URL ────────────────
-            # The caller (api.py /book) sends an email with this link so the
-            # user can complete the reservation with one click.
-            print(f"✅ Reached checkout: {page.url}")
-            return {
-                "status":    "pending_confirmation",
-                "final_url": page.url,
-                "search_url": search_url,
-            }
+            print("⚠️  No time slots found via CDP")
+            return {"status": "pending_confirmation", "final_url": search_url,
+                    "search_url": search_url, "slot_found": False}
 
         except Exception as e:
-            return {"status": "error", "error": str(e), "search_url": search_url}
+            print(f"❌ CDP booking error: {e}")
+            return {"status": "pending_confirmation", "final_url": search_url,
+                    "search_url": search_url, "slot_found": False}
+        finally:
+            try:
+                await page.close()
+            except Exception:
+                pass
 
 
 def book_restaurant(restaurant_name: str, city: str, date: str, time_pref: str, party_size: int) -> dict:
-    return asyncio.run(book_opentable(restaurant_name, city, date, time_pref, party_size))
+    search_url = build_search_url(restaurant_name, city, date, time_pref, party_size)
+
+    # Try CDP Chrome first (requires start.sh to have launched it)
+    result = asyncio.run(_try_cdp_booking(search_url, restaurant_name))
+
+    if result is None:
+        # CDP unavailable — skip browser entirely, email the search URL directly
+        print("⚙️  CDP unavailable — skipping browser, emailing search URL")
+        result = {
+            "status":     "pending_confirmation",
+            "final_url":  search_url,
+            "search_url": search_url,
+            "slot_found": False,
+        }
+
+    return result
