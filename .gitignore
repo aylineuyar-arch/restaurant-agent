@@ -1,0 +1,16 @@
+.env
+.api_pid
+.api_port
+.react_pid
+.ui_port
+.chrome-dev-profile/
+chroma_db/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+uvicorn.log
+start-run.log
+node_modules/
+frontend/dist/
+frontend/.env.local

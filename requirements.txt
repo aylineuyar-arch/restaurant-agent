@@ -1,0 +1,10 @@
+anthropic
+httpx
+tavily-python
+streamlit
+python-dotenv
+langgraph
+fastapi
+uvicorn
+chromadb
+pydantic
