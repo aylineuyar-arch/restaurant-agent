@@ -7,6 +7,7 @@ from nodes import (
     retry_research,
     enrich,
     rank,
+    evaluate,
     book,
     save,
     send_email,
@@ -25,6 +26,7 @@ def build_graph():
     g.add_node("retry_research", retry_research)
     g.add_node("enrich",         enrich)
     g.add_node("rank",           rank)
+    g.add_node("evaluate",       evaluate)
     g.add_node("book",           book)
     g.add_node("save",           save)
     g.add_node("send_email",     send_email)
@@ -44,8 +46,9 @@ def build_graph():
     )
     g.add_edge("retry_research", "enrich")
 
-    g.add_edge("enrich", "rank")
-    g.add_edge("rank",   "book")
+    g.add_edge("enrich",   "rank")
+    g.add_edge("rank",     "evaluate")
+    g.add_edge("evaluate", "book")
     g.add_edge("book",   "save")
 
     # Conditional: email only if user provided one
@@ -81,6 +84,8 @@ def _initial_state(query: str) -> AgentState:
         "booking_status":   "",
         "email_status":     "",
         "final_answer":     "",
+        "eval_score":       0.0,
+        "eval_verdict":     "",
         "log":              [],
     }
 

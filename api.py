@@ -1,5 +1,8 @@
 import os
 import json
+import time
+import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +11,8 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from graph import run_graph, stream_graph
 from booking import book_restaurant
+import monitor_db
+from monitor_routes import router as monitor_router
 
 load_dotenv()
 
@@ -17,7 +22,16 @@ for _proxy_var in (
 ):
     os.environ.pop(_proxy_var, None)
 
-app = FastAPI(title="Restaurant Agent API", version="2.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    monitor_db.init_db()
+    yield
+
+
+app = FastAPI(title="Restaurant Agent API", version="2.0", lifespan=lifespan)
+
+app.include_router(monitor_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -64,14 +78,50 @@ def find_restaurant_stream(q: str):
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
     def generate():
-        final_state = {}
+        run_id     = str(uuid.uuid4())
+        wall_start = time.monotonic()
+        monitor_db.create_run(run_id, q)
+
+        final_state  = {}
+        node_traces  = []
+        seq          = 0
+        prev_ts      = wall_start
+
         try:
             for node_name, output in stream_graph(q):
+                now        = time.monotonic()
+                latency_ms = int((now - prev_ts) * 1000)
+                prev_ts    = now
+
+                log_entry  = (output.get("log") or [""])[0]
+                node_status = "error" if "error" in log_entry.lower() else "ok"
+
+                monitor_db.upsert_node_trace(run_id, seq, node_name, latency_ms, node_status, log_entry)
+                node_traces.append({"status": node_status})
+                seq += 1
+
                 final_state.update(output)
                 event = {"node": node_name, "log": output.get("log", [])}
                 yield f"data: {json.dumps(event)}\n\n"
-            yield f"data: {json.dumps({'done': True, **_build_result(final_state)})}\n\n"
+
+            result      = _build_result(final_state)
+            total_ms    = int((time.monotonic() - wall_start) * 1000)
+            ran_retry   = any("retry" in l.lower() for l in final_state.get("log", []))
+            raw_count   = len(final_state.get("raw_results", []))
+            recs_count  = len(result.get("recommendations", []))
+
+            eval_score = final_state.get("eval_score", 0.0)
+            monitor_db.finalize_run(run_id, total_ms, recs_count, node_traces, ran_retry, raw_count,
+                                    eval_score=eval_score)
+
+            yield f"data: {json.dumps({'done': True, 'run_id': run_id, **result})}\n\n"
+
+        except GeneratorExit:
+            total_ms = int((time.monotonic() - wall_start) * 1000)
+            monitor_db.finalize_run(run_id, total_ms, 0, node_traces, False, 0, status="error")
         except Exception as e:
+            total_ms = int((time.monotonic() - wall_start) * 1000)
+            monitor_db.finalize_run(run_id, total_ms, 0, node_traces, False, 0, status="error")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream",
@@ -88,6 +138,8 @@ def _build_result(state: dict) -> dict:
         "date":            state.get("date", ""),
         "party_size":      state.get("party_size", 2),
         "log":             state.get("log", []),
+        "eval_score":      state.get("eval_score", 0.0),
+        "eval_verdict":    state.get("eval_verdict", ""),
     }
 
 

@@ -2,12 +2,25 @@ import { useState } from 'react'
 
 const API_URL = `http://localhost:${import.meta.env.VITE_API_PORT || '8003'}`
 
-export default function RestaurantCard({ restaurant, featured = false, date, partySize, city }) {
+export default function RestaurantCard({ restaurant, featured = false, date, partySize, city, runId, evalVerdict }) {
   const { name, neighborhood, price_range, reason, rating_info, rank } = restaurant
   const tags = Array.isArray(restaurant.tags) ? restaurant.tags : []
   const [status, setStatus]       = useState('idle')
   const [showModal, setShowModal] = useState(false)
   const [errorMsg, setErrorMsg]   = useState('')
+  const [feedback, setFeedback]   = useState(null)  // null | 1 | -1
+
+  async function submitFeedback(rating) {
+    if (!runId || feedback !== null) return
+    setFeedback(rating)
+    try {
+      await fetch(`${API_URL}/monitor/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ run_id: runId, restaurant: name, rating }),
+      })
+    } catch { /* silent */ }
+  }
 
   async function confirmBooking() {
     setShowModal(false)
@@ -122,9 +135,40 @@ export default function RestaurantCard({ restaurant, featured = false, date, par
             )}
 
             {reason && (
-              <p className={`leading-relaxed mb-5 ${featured ? 'text-sm text-ink/80' : 'text-xs text-white/40 line-clamp-2'}`}>
+              <p className={`leading-relaxed mb-3 ${featured ? 'text-sm text-ink/80' : 'text-xs text-white/40 line-clamp-2'}`}>
                 {reason}
               </p>
+            )}
+
+            {/* AI eval verdict — featured card only */}
+            {featured && evalVerdict && (
+              <p className="text-xs text-accent/60 italic mb-4">
+                ✦ AI eval: {evalVerdict}
+              </p>
+            )}
+
+            {/* Feedback thumbs */}
+            {runId && (
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-xs text-muted">was this a good pick?</span>
+                <button
+                  onClick={() => submitFeedback(1)}
+                  disabled={feedback !== null}
+                  className={`text-sm px-2 py-0.5 rounded transition-all ${feedback === 1 ? 'text-emerald-400' : 'text-muted hover:text-emerald-400 disabled:opacity-40'}`}
+                >
+                  👍
+                </button>
+                <button
+                  onClick={() => submitFeedback(-1)}
+                  disabled={feedback !== null}
+                  className={`text-sm px-2 py-0.5 rounded transition-all ${feedback === -1 ? 'text-red-400' : 'text-muted hover:text-red-400 disabled:opacity-40'}`}
+                >
+                  👎
+                </button>
+                {feedback !== null && (
+                  <span className="text-xs text-muted">got it, thanks</span>
+                )}
+              </div>
             )}
 
             {/* Status */}

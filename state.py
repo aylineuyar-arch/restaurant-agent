@@ -25,5 +25,9 @@ class AgentState(TypedDict):
     email_status:    str
     final_answer:    str
 
+    # Eval node output
+    eval_score:   float
+    eval_verdict: str
+
     # Accumulates across all nodes (reducer)
     log: Annotated[list[str], operator.add]

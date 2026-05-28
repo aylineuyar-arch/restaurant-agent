@@ -190,6 +190,53 @@ CRITICAL: First tag of each item MUST be exactly one of: "casual", "mid-range", 
         }
 
 
+# ── Node 5b: LLM-as-Judge — evaluate top recommendation ─────────────────────
+
+def evaluate(state: AgentState) -> dict:
+    """Claude Haiku judges whether the top pick actually matches the query intent."""
+    recs = state.get("recommendations", [])
+    if not recs:
+        return {
+            "eval_score":   0.0,
+            "eval_verdict": "no recommendations to evaluate",
+            "log": ["EvalNode: skipped (no recs)"],
+        }
+
+    top   = recs[0]
+    query = state.get("query", "")
+
+    try:
+        response = claude.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=120,
+            messages=[{
+                "role": "user",
+                "content": f"""You are a restaurant recommendation evaluator.
+Query: "{query}"
+Top pick: {top.get('name')} | {top.get('neighborhood','')} | {top.get('price_range','')} | tags: {top.get('tags',[])}
+Reason given: {top.get('reason','')}
+
+Score how well this pick matches the query intent. JSON only:
+{{"score": 0.0, "verdict": "one sentence max 12 words"}}
+score: 0.0=terrible match, 1.0=perfect match"""
+            }]
+        )
+        parsed  = _extract_json(response.content[0].text)
+        score   = round(float(parsed.get("score", 0.7)), 2)
+        verdict = str(parsed.get("verdict", ""))
+        return {
+            "eval_score":   score,
+            "eval_verdict": verdict,
+            "log": [f"EvalNode: score={score} — {verdict}"],
+        }
+    except Exception as e:
+        return {
+            "eval_score":   0.7,
+            "eval_verdict": "",
+            "log": [f"EvalNode error: {type(e).__name__}: {e}"],
+        }
+
+
 # ── Node 6: Booking page ready (user clicks in UI) ───────────────────────────
 
 def book(state: AgentState) -> dict:

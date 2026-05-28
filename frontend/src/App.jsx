@@ -2,6 +2,7 @@ import { useState } from 'react'
 import SearchForm from './components/SearchForm'
 import AgentSteps from './components/AgentSteps'
 import RestaurantCard from './components/RestaurantCard'
+import MonitorDashboard from './components/monitor/MonitorDashboard'
 
 const API_URL = `http://localhost:${import.meta.env.VITE_API_PORT || '8003'}`
 
@@ -12,8 +13,11 @@ export default function App() {
   const [summary, setSummary]   = useState('')
   const [error, setError]       = useState('')
   const [meta, setMeta]         = useState({})
-  const [filter, setFilter]     = useState(null)   // null = all
+  const [filter, setFilter]       = useState(null)
   const [lastQuery, setLastQuery] = useState('')
+  const [monitor, setMonitor]     = useState(false)
+  const [runId, setRunId]         = useState(null)
+  const [evalVerdict, setEvalVerdict] = useState('')
 
   const FILTERS = [
     { key: null,         label: 'show me everything' },
@@ -54,6 +58,8 @@ export default function App() {
         if (data.done) {
           setResults(data.recommendations || [])
           setSummary(data.final_answer || '')
+          setRunId(data.run_id || null)
+          setEvalVerdict(data.eval_verdict || '')
           setMeta({
             city:       data.city,
             cuisine:    data.cuisine,
@@ -82,6 +88,8 @@ export default function App() {
     setError('')
     setMeta({})
     setFilter(null)
+    setRunId(null)
+    setEvalVerdict('')
   }
 
   const filtered = results
@@ -93,19 +101,46 @@ export default function App() {
     <div className="min-h-screen bg-bg text-ink">
       {/* Top bar */}
       <header className="border-b border-subtle px-4 py-4 flex items-center justify-between">
-        <span className="font-display text-4xl font-bold tracking-wide text-accent">fork yeah!</span>
-        {results && (
+        <span
+          className="font-display text-4xl font-bold tracking-wide text-accent cursor-pointer"
+          onClick={() => { setMonitor(false); handleReset() }}
+        >
+          fork yeah!
+        </span>
+        <div className="flex items-center gap-3">
+          {results && !monitor && (
+            <button
+              onClick={handleReset}
+              className="text-sm text-muted hover:text-ink border border-subtle hover:border-ink/20
+                         rounded-full px-5 py-2 transition-all"
+            >
+              still hungry?
+            </button>
+          )}
           <button
-            onClick={handleReset}
-            className="text-sm text-muted hover:text-ink border border-subtle hover:border-ink/20
-                       rounded-full px-5 py-2 transition-all"
+            onClick={() => setMonitor(v => !v)}
+            className={`text-xs border rounded-full px-4 py-2 transition-all ${
+              monitor
+                ? 'bg-accent/10 border-accent/40 text-accent'
+                : 'border-subtle text-muted hover:text-ink hover:border-ink/20'
+            }`}
           >
-            still hungry?
+            {monitor ? '← back' : '⬡ monitor'}
           </button>
-        )}
+        </div>
       </header>
 
       <main className="max-w-3xl mx-auto py-8">
+        {monitor && (
+          <div className="px-4">
+            <div className="flex items-center gap-3 mb-8">
+              <p className="text-xs text-muted uppercase tracking-widest">Monitor Mode</p>
+              <span className="text-xs text-white/20">— workflow observability</span>
+            </div>
+            <MonitorDashboard apiUrl={API_URL} />
+          </div>
+        )}
+        {!monitor && (<>
 
         {/* Search — show when no results yet */}
         {!results && !loading && (
@@ -178,7 +213,7 @@ export default function App() {
 
             {top && (
               <div className="mb-3">
-                <RestaurantCard restaurant={top} featured date={meta.date} partySize={meta.party_size} city={meta.city} />
+                <RestaurantCard restaurant={top} featured date={meta.date} partySize={meta.party_size} city={meta.city} runId={runId} evalVerdict={evalVerdict} />
               </div>
             )}
 
@@ -187,13 +222,14 @@ export default function App() {
                 <p className="text-xs uppercase tracking-widest text-white/20 mb-2 px-4">other options</p>
                 <div className="flex flex-col gap-1.5">
                   {others.map((r, i) => (
-                    <RestaurantCard key={i} restaurant={r} date={meta.date} partySize={meta.party_size} city={meta.city} />
+                    <RestaurantCard key={i} restaurant={r} date={meta.date} partySize={meta.party_size} city={meta.city} runId={runId} />
                   ))}
                 </div>
               </>
             )}
           </div>
         )}
+        </>)}
       </main>
     </div>
   )
