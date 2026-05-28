@@ -1,12 +1,10 @@
 anthropic
 httpx
 tavily-python
-streamlit
 python-dotenv
 langgraph
 fastapi
-uvicorn
+uvicorn[standard]
 chromadb
 pydantic
-resend
 resend

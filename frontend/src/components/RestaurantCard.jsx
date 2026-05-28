@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-const API_URL = `http://localhost:${import.meta.env.VITE_API_PORT || '8003'}`
+const API_URL = import.meta.env.VITE_API_URL || `http://localhost:${import.meta.env.VITE_API_PORT || '8003'}`
 
 export default function RestaurantCard({ restaurant, featured = false, date, partySize, city, runId, evalVerdict }) {
   const { name, neighborhood, price_range, reason, rating_info, rank } = restaurant

@@ -4,7 +4,7 @@ import AgentSteps from './components/AgentSteps'
 import RestaurantCard from './components/RestaurantCard'
 import MonitorDashboard from './components/monitor/MonitorDashboard'
 
-const API_URL = `http://localhost:${import.meta.env.VITE_API_PORT || '8003'}`
+const API_URL = import.meta.env.VITE_API_URL || `http://localhost:${import.meta.env.VITE_API_PORT || '8003'}`
 
 export default function App() {
   const [loading, setLoading]   = useState(false)
