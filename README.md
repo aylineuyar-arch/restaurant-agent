@@ -1,28 +1,96 @@
-# Restaurant Reservation Agent
+# Fork Yeah! — AI Restaurant Reservation Agent
 
-An agentic AI workflow that researches, ranks, and initiates OpenTable reservations from a single natural-language request.
+A portfolio-quality multi-agent AI app that goes from a natural-language request to a restaurant recommendation and booking confirmation — with live workflow observability built in.
 
 ## What it does
 
-1. **Parse** — extracts city, cuisine, date, party size from plain English using Claude Haiku
-2. **Memory** — checks ChromaDB for past searches to personalize recommendations
-3. **Research** — searches OpenTable via Tavily for matching restaurants
-4. **Enrich** — pulls ratings, neighborhood, and price info for each candidate
-5. **Rank** — Claude Sonnet picks the top 3 across different price points with reasoning
-6. **Book** — Playwright connects to an isolated Chrome instance, navigates to OpenTable, and selects a time slot
-7. **Notify** — sends you an email with the pre-filled checkout link to confirm with one click
+Type something like *"great date night spot in NYC on Friday, two people, something a bit fancy"* and the agent pipeline kicks off:
+
+1. **Parse** — Claude Haiku extracts city, cuisine, date, party size, and vibe from plain English
+2. **Memory** — ChromaDB checks past searches to skip redundant lookups
+3. **Research** — Tavily searches OpenTable and surfaces real, bookable restaurants
+4. **Retry** — if fewer than 3 results come back, automatically broadens the query
+5. **Enrich** — pulls neighborhood, price range, ratings, and tags for each candidate
+6. **Rank** — Claude Sonnet selects 6 recommendations across 3 price tiers (casual / mid-range / high-end) with written reasoning
+7. **Evaluate** — Claude Haiku acts as an LLM judge: independently scores and writes a one-sentence verdict on the top pick
+8. **Book** — Playwright connects to Chrome via CDP and attempts the OpenTable reservation; falls back to a direct search URL if bot detection blocks it
+9. **Notify** — Resend fires a transactional email with the checkout link
+
+Every step streams live to the UI as it completes.
 
 ## Stack
 
 | Layer | Tech |
 |---|---|
-| Agent graph | LangGraph |
-| LLM | Claude Haiku (parse) + Claude Sonnet (rank) |
+| Agent graph | LangGraph (StateGraph with conditional edges) |
+| LLMs | Claude Haiku (parse, evaluate) + Claude Sonnet (rank) |
 | Search | Tavily API |
 | Vector memory | ChromaDB |
 | Browser automation | Playwright over Chrome CDP |
-| API | FastAPI |
+| Transactional email | Resend |
+| API | FastAPI with Server-Sent Events |
+| Observability | SQLite (WAL mode) + custom monitor dashboard |
 | Frontend | React + Vite + Tailwind CSS |
+
+## Features
+
+### Live agent pipeline
+Every node in the LangGraph workflow streams a status update to the UI via Server-Sent Events. Users see checkmarks appear in real time as Parse → Memory → Research → Enrich → Rank → Evaluate → Book completes.
+
+### Vibe filters + regeneration
+Results are tagged by tier. Filter pills — "no dress code", "treat yourself", "full send" — narrow results client-side without re-running the agent. A "↺ new batch" button re-runs the same query for a fresh set of recommendations.
+
+### LLM-as-judge evaluation
+After Sonnet ranks the results, Haiku independently evaluates the top pick and returns a score (0–1) and a one-sentence verdict. The verdict appears on the featured card; the score is logged to Monitor.
+
+### User feedback loop
+Every restaurant card has 👍/👎 buttons. Ratings are persisted to SQLite and surface in the Monitor run detail panel alongside the node trace.
+
+### Monitor Mode
+A built-in observability dashboard (toggle "⬡ monitor" in the header) shows:
+- **Stats row**: total runs, success rate, avg latency, escalation count
+- **Runs table**: query, status, latency, recommendation count, confidence score, AI eval score, timestamp
+- **Escalation queue**: runs flagged for review when confidence < 0.5 or no recs returned
+- **Run detail modal**: node pipeline timeline (proportional latency bars per node), metadata grid, user feedback
+- Auto-refreshes every 30 seconds
+
+### Confidence scoring and escalation
+Each run gets an algorithmic confidence score (starts at 1.0, penalized for errors, retries, zero results). Low-confidence runs are flagged and surfaced in the review queue.
+
+## Architecture
+
+```
+User query
+    │
+    ▼
+parse_input (Haiku) ──────────────────── extracts city, cuisine, date, party size
+    │
+    ▼
+check_memory (ChromaDB) ──────────────── skip re-research if seen before
+    │
+    ▼
+research (Tavily → OpenTable)
+    │
+    ├─ < 3 results → retry_research (broader query)
+    │
+    ▼
+enrich (Tavily → Google Maps) ────────── neighborhood, ratings, price, tags
+    │
+    ▼
+rank (Sonnet) ────────────────────────── 6 recs, 2 per tier, with reasoning
+    │
+    ▼
+evaluate (Haiku, LLM-as-judge) ──────── score + verdict on top pick
+    │
+    ▼
+book (Playwright → Chrome CDP) ──────── OpenTable slot selection; falls back to search URL
+    │
+    ▼
+send_email (Resend) ─────────────────── checkout link or direct booking confirmation
+    │
+    ▼
+Monitor DB (SQLite) ─────────────────── run trace, confidence, eval score, user feedback
+```
 
 ## Setup
 
@@ -34,10 +102,10 @@ cd restaurant-agent
 cp .env.example .env
 ```
 
-Edit `.env` and add:
+Edit `.env`:
 - `ANTHROPIC_API_KEY` — from [console.anthropic.com](https://console.anthropic.com)
 - `TAVILY_API_KEY` — from [tavily.com](https://tavily.com)
-- `EMAIL_SENDER` + `EMAIL_PASSWORD` — Gmail + [App Password](https://myaccount.google.com/apppasswords)
+- `RESEND_API_KEY` — from [resend.com](https://resend.com)
 - `NOTIFICATION_EMAIL` — where to send reservation links
 
 ### 2. Install dependencies
@@ -58,50 +126,10 @@ cd frontend && npm install && cd ..
 ./start.sh
 ```
 
-This starts FastAPI, React, and an isolated Chrome instance (separate from your personal Chrome profile). Open the URL printed in the terminal.
-
-## Usage
-
-Type a request in plain English:
-
-> *Italian restaurant in NYC for 2 on June 1*
-
-The agent researches, enriches, and ranks options. Click **Book on OpenTable →** on any result — the agent selects a time slot and emails you a direct checkout link.
-
-## Architecture
-
-```
-User query
-    │
-    ▼
-parse_input (Haiku)
-    │
-    ▼
-check_memory (ChromaDB)
-    │
-    ▼
-research (Tavily → OpenTable)
-    │
-    ├─ < 3 results → retry_research (broader query)
-    │
-    ▼
-enrich (Tavily → Google Maps)
-    │
-    ▼
-rank (Sonnet) → recommendations
-    │
-    ▼
-/book endpoint
-    │
-    ▼
-Playwright CDP → isolated Chrome → OpenTable time slot
-    │
-    ▼
-Email: "Complete your reservation →"
-```
+Opens on `http://localhost:5173`. The FastAPI backend runs on port 8003.
 
 ## Notes
 
-- Booking automation connects to an isolated Chrome profile at `.chrome-dev-profile/` — your personal Chrome data is never touched
-- Email is sent via Gmail SMTP; requires an App Password (not your account password)
-- OpenTable requires sign-in to complete a reservation — the agent handles everything up to checkout and emails you the link
+- Booking connects to an isolated Chrome profile — your personal Chrome data is never touched
+- OpenTable bot detection occasionally blocks headless browsers; the agent emails a direct search URL as fallback so you always get a response
+- Monitor Mode data persists in `monitor.db` (SQLite, WAL mode) between server restarts
