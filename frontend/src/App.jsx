@@ -37,6 +37,7 @@ export default function App() {
     setLastQuery(q)
     const url = `${API_URL}/find-restaurant-stream?q=${encodeURIComponent(q)}`
     const es  = new EventSource(url)
+    let completed = false
 
     es.onmessage = (e) => {
       try {
@@ -56,6 +57,7 @@ export default function App() {
 
         // Final event
         if (data.done) {
+          completed = true
           setResults(data.recommendations || [])
           setSummary(data.final_answer || '')
           setRunId(data.run_id || null)
@@ -75,8 +77,11 @@ export default function App() {
     }
 
     es.onerror = () => {
-      setError('Connection lost — please try again')
-      setLoading(false)
+      // onerror also fires when the server closes the connection after 'done' — ignore in that case
+      if (!completed) {
+        setError('Connection lost — please try again')
+        setLoading(false)
+      }
       es.close()
     }
   }
