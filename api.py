@@ -58,7 +58,11 @@ class BookRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "anthropic_key_set": bool(os.getenv("ANTHROPIC_API_KEY")),
+        "tavily_key_set":    bool(os.getenv("TAVILY_API_KEY")),
+    }
 
 
 @app.post("/find-restaurant")
