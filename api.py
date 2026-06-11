@@ -2,6 +2,8 @@ import os
 import json
 import time
 import uuid
+import threading
+import queue as _queue
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -86,14 +88,50 @@ def find_restaurant_stream(q: str):
         node_traces  = []
         seq          = 0
         prev_ts      = wall_start
+        result_q     = _queue.Queue()
+
+        def _run_agent():
+            try:
+                for node_name, output in stream_graph(q):
+                    result_q.put(("node", node_name, output))
+                result_q.put(("done", None, None))
+            except Exception as e:
+                result_q.put(("error", str(e), None))
+
+        threading.Thread(target=_run_agent, daemon=True).start()
 
         try:
-            for node_name, output in stream_graph(q):
+            while True:
+                try:
+                    msg_type, node_name, output = result_q.get(timeout=15)
+                except _queue.Empty:
+                    # Send SSE comment to keep Railway/proxy from timing out
+                    yield ": keepalive\n\n"
+                    continue
+
+                if msg_type == "error":
+                    total_ms = int((time.monotonic() - wall_start) * 1000)
+                    monitor_db.finalize_run(run_id, total_ms, 0, node_traces, False, 0, status="error")
+                    yield f"data: {json.dumps({'error': node_name})}\n\n"
+                    break
+
+                if msg_type == "done":
+                    result     = _build_result(final_state)
+                    total_ms   = int((time.monotonic() - wall_start) * 1000)
+                    ran_retry  = any("retry" in l.lower() for l in final_state.get("log", []))
+                    raw_count  = len(final_state.get("raw_results", []))
+                    recs_count = len(result.get("recommendations", []))
+                    eval_score = final_state.get("eval_score", 0.0)
+                    monitor_db.finalize_run(run_id, total_ms, recs_count, node_traces, ran_retry,
+                                            raw_count, eval_score=eval_score)
+                    yield f"data: {json.dumps({'done': True, 'run_id': run_id, **result})}\n\n"
+                    break
+
                 now        = time.monotonic()
                 latency_ms = int((now - prev_ts) * 1000)
                 prev_ts    = now
 
-                log_entry  = (output.get("log") or [""])[0]
+                log_entry   = (output.get("log") or [""])[0]
                 node_status = "error" if "error" in log_entry.lower() else "ok"
 
                 monitor_db.upsert_node_trace(run_id, seq, node_name, latency_ms, node_status, log_entry)
@@ -101,28 +139,11 @@ def find_restaurant_stream(q: str):
                 seq += 1
 
                 final_state.update(output)
-                event = {"node": node_name, "log": output.get("log", [])}
-                yield f"data: {json.dumps(event)}\n\n"
-
-            result      = _build_result(final_state)
-            total_ms    = int((time.monotonic() - wall_start) * 1000)
-            ran_retry   = any("retry" in l.lower() for l in final_state.get("log", []))
-            raw_count   = len(final_state.get("raw_results", []))
-            recs_count  = len(result.get("recommendations", []))
-
-            eval_score = final_state.get("eval_score", 0.0)
-            monitor_db.finalize_run(run_id, total_ms, recs_count, node_traces, ran_retry, raw_count,
-                                    eval_score=eval_score)
-
-            yield f"data: {json.dumps({'done': True, 'run_id': run_id, **result})}\n\n"
+                yield f"data: {json.dumps({'node': node_name, 'log': output.get('log', [])})}\n\n"
 
         except GeneratorExit:
             total_ms = int((time.monotonic() - wall_start) * 1000)
             monitor_db.finalize_run(run_id, total_ms, 0, node_traces, False, 0, status="error")
-        except Exception as e:
-            total_ms = int((time.monotonic() - wall_start) * 1000)
-            monitor_db.finalize_run(run_id, total_ms, 0, node_traces, False, 0, status="error")
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
