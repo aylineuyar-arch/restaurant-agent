@@ -43,6 +43,8 @@ export default function App() {
       try {
         const data = JSON.parse(e.data)
 
+        if (data.ping) return  // keepalive — ignore
+
         if (data.error) {
           setError(data.error)
           setLoading(false)

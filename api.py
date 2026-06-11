@@ -103,10 +103,11 @@ def find_restaurant_stream(q: str):
         try:
             while True:
                 try:
-                    msg_type, node_name, output = result_q.get(timeout=15)
+                    msg_type, node_name, output = result_q.get(timeout=5)
                 except _queue.Empty:
-                    # Send SSE comment to keep Railway/proxy from timing out
-                    yield ": keepalive\n\n"
+                    # Send real data event (not a comment) so Railway's proxy
+                    # treats it as activity and doesn't drop the connection
+                    yield "data: {\"ping\": true}\n\n"
                     continue
 
                 if msg_type == "error":
