@@ -1,7 +1,6 @@
 import asyncio
 from typing import Optional
 from urllib.parse import quote_plus
-from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
 CHROME_CDP_URL = "http://127.0.0.1:9222"
 
@@ -30,6 +29,11 @@ def build_search_url(restaurant_name: str, city: str, date: str, time_pref: str,
 
 async def _try_cdp_booking(search_url: str, restaurant_name: str) -> Optional[dict]:
     """Attempt slot-click via pre-launched CDP Chrome. Returns None if CDP unavailable."""
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        return None  # Playwright not installed (e.g. on Railway) — fall back to URL email
+
     async with async_playwright() as p:
         try:
             browser = await p.chromium.connect_over_cdp(CHROME_CDP_URL)
