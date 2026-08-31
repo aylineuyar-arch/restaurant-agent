@@ -1,4 +1,7 @@
-# Fork Yeah! — AI Restaurant Reservation Agent
+# Fork Yea! — AI Restaurant Reservation Agent
+
+**Part of [AylinOS](https://github.com/aylineuyar-arch/aylinos)** — six live agents, one router.
+**Live demos & case studies:** [aylin-uyar-portfolio.lovable.app](https://aylin-uyar-portfolio.lovable.app)
 
 A portfolio-quality multi-agent AI app that goes from a natural-language request to a restaurant recommendation and booking confirmation — with live workflow observability built in.
 
